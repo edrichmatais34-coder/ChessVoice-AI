@@ -12,66 +12,110 @@
       color: white;
       font-family: Arial, sans-serif;
       text-align: center;
-      padding: 20px;
+      padding: 15px;
     }
 
     h1 { color: #00e5a8; }
 
     .panel {
       background: #1d2b36;
-      padding: 22px;
+      padding: 18px;
       border-radius: 15px;
-      margin-top: 25px;
+      margin: 15px auto;
+      max-width: 500px;
     }
 
-    #status {
-      color: #00e5a8;
-      font-weight: bold;
-      font-size: 19px;
-    }
-
-    #heard {
-      font-size: 18px;
-      min-height: 50px;
-      overflow-wrap: anywhere;
+    button, select {
+      padding: 13px;
+      margin: 6px;
+      border: none;
+      border-radius: 9px;
+      font-size: 16px;
     }
 
     button {
       background: #00c995;
       color: #101820;
-      border: none;
-      padding: 14px 20px;
-      margin: 8px;
-      border-radius: 10px;
-      font-size: 16px;
       font-weight: bold;
     }
 
-    button:active { opacity: 0.7; }
+    select {
+      background: white;
+      color: black;
+    }
+
+    #status {
+      color: #00e5a8;
+      font-weight: bold;
+    }
+
+    #moves {
+      text-align: left;
+      overflow-wrap: anywhere;
+      line-height: 1.8;
+    }
+
+    #fen {
+      font-size: 12px;
+      overflow-wrap: anywhere;
+      color: #b8c6d1;
+    }
   </style>
 </head>
 
 <body>
+
   <h1>♟ ChessVoice AI</h1>
   <p>Your voice-powered chess assistant</p>
 
   <div class="panel">
-    <p id="status">Ready</p>
-    <p id="heard">Waiting for your voice...</p>
+    <h3>Choose Your Side</h3>
+
+    <select id="side">
+      <option value="w">White</option>
+      <option value="b">Black</option>
+    </select>
+
+    <p id="yourSide">Your side: White</p>
+  </div>
+
+  <div class="panel">
+    <h3>🎙 Voice Control</h3>
+
+    <p id="status">Starting...</p>
+    <p id="heard">Waiting for a chess move...</p>
 
     <button onclick="startListening()">
-      🎙 Start / Restart
+      Start / Restart Listening
     </button>
 
     <button onclick="stopListening()">
-      Stop
+      Stop Listening
     </button>
+
+    <p style="font-size:13px;color:#b8c6d1">
+      Example: "Knight to F3" or "Pawn to E4"
+    </p>
   </div>
 
-  <script>
-    const SpeechRecognition =
-      window.SpeechRecognition ||
-      window.webkitSpeechRecognition;
+  <div class="panel">
+    <h3>♟ Move History</h3>
+    <div id="moves">No moves yet.</div>
+  </div>
+
+  <div class="panel">
+    <h3>Current Position</h3>
+    <p id="turn">White to move</p>
+    <p id="fen">Starting position</p>
+
+    <button onclick="newGame()">New Game</button>
+  </div>
+
+  <script type="module">
+    import { Chess } from
+      "https://cdn.jsdelivr.net/npm/chess.js@1.4.0/dist/esm/chess.js";
+
+    let game = new Chess();
 
     let recognition = null;
     let listening = false;
@@ -79,11 +123,25 @@
     let restartTimer = null;
     let retryCount = 0;
 
+    const SpeechRecognition =
+      window.SpeechRecognition ||
+      window.webkitSpeechRecognition;
+
     const statusText = document.getElementById("status");
     const heardText = document.getElementById("heard");
+    const movesText = document.getElementById("moves");
+    const turnText = document.getElementById("turn");
+    const fenText = document.getElementById("fen");
+    const sideSelect = document.getElementById("side");
+
+    sideSelect.addEventListener("change", () => {
+      document.getElementById("yourSide").textContent =
+        "Your side: " +
+        (sideSelect.value === "w" ? "White" : "Black");
+    });
 
     function speak(message) {
-      if (!("speechSynthesis" in window)) return;
+      if (!window.speechSynthesis) return;
 
       window.speechSynthesis.cancel();
 
@@ -93,18 +151,167 @@
       window.speechSynthesis.speak(voice);
     }
 
+    function updateBoard() {
+      const history = game.history();
+
+      if (history.length === 0) {
+        movesText.textContent = "No moves yet.";
+      } else {
+        movesText.innerHTML = "";
+
+        for (let i = 0; i < history.length; i += 2) {
+          const moveNumber = Math.floor(i / 2) + 1;
+          const whiteMove = history[i];
+          const blackMove = history[i + 1] || "";
+
+          const line = document.createElement("div");
+          line.textContent =
+            moveNumber + ". " + whiteMove + " " + blackMove;
+
+          movesText.appendChild(line);
+        }
+      }
+
+      turnText.textContent =
+        game.turn() === "w" ? "White to move" : "Black to move";
+
+      fenText.textContent = game.fen();
+    }
+
+    function normalize(text) {
+      return text.toLowerCase()
+        .replace(/night/g, "knight")
+        .replace(/to the/g, "to")
+        .replace(/([a-h])\s+([1-8])/g, "$1$2")
+        .replace(/[^a-z0-9 -]/g, " ")
+        .replace(/\s+/g, " ")
+        .trim();
+    }
+
+    function processMove(originalText) {
+      const text = normalize(originalText);
+
+      if (game.isGameOver()) {
+        speak("The game is over. Start a new game.");
+        return;
+      }
+
+      // Handle castling.
+      if (text.includes("castle")) {
+        const longCastle =
+          text.includes("queenside") ||
+          text.includes("queen side") ||
+          text.includes("long");
+
+        const san = longCastle ? "O-O-O" : "O-O";
+
+        try {
+          const move = game.move(san);
+          finishMove(move);
+        } catch {
+          speak("That castle is not legal.");
+        }
+        return;
+      }
+
+      // Find the destination square.
+      const square = text.match(/\b([a-h][1-8])\b/);
+
+      if (!square) {
+        speak("I could not understand the destination square.");
+        return;
+      }
+
+      const destination = square[1];
+
+      // Identify the moving piece.
+      let piece = "p";
+
+      if (text.includes("knight")) piece = "n";
+      else if (text.includes("bishop")) piece = "b";
+      else if (text.includes("rook")) piece = "r";
+      else if (text.includes("queen")) piece = "q";
+      else if (text.includes("king")) piece = "k";
+
+      // Optional starting square for ambiguous moves.
+      const fromMatch = text.match(
+        /from ([a-h][1-8])/
+      );
+
+      const legalMoves = game.moves({ verbose: true });
+
+      let candidates = legalMoves.filter(move =>
+        move.piece === piece &&
+        move.to === destination
+      );
+
+      if (fromMatch) {
+        candidates = candidates.filter(move =>
+          move.from === fromMatch[1]
+        );
+      }
+
+      if (candidates.length === 0) {
+        speak("That is not a legal move. Please try again.");
+        return;
+      }
+
+      if (candidates.length > 1) {
+        speak(
+          "There is more than one possible move. Please say the starting square too."
+        );
+        return;
+      }
+
+      try {
+        const selected = candidates[0];
+
+        const move = game.move({
+          from: selected.from,
+          to: selected.to,
+          promotion: "q"
+        });
+
+        finishMove(move);
+      } catch {
+        speak("I could not complete that move.");
+      }
+    }
+
+    function finishMove(move) {
+      updateBoard();
+
+      const side =
+        move.color === "w" ? "White" : "Black";
+
+      const message =
+        side + " played " + move.san;
+
+      heardText.textContent = message;
+
+      speak(message);
+
+      if (game.isCheckmate()) {
+        speak("Checkmate! The game is over.");
+      } else if (game.isCheck()) {
+        speak("Check!");
+      } else if (game.isDraw()) {
+        speak("The game is a draw.");
+      }
+    }
+
     function scheduleRestart() {
       if (manuallyStopped || restartTimer) return;
 
       retryCount++;
 
-      // Gradually increase the wait time, up to 10 seconds.
-      const delay = Math.min(1500 * retryCount, 10000);
+      const delay = Math.min(retryCount * 1500, 10000);
 
       statusText.textContent =
-        "Reconnecting in " + Math.ceil(delay / 1000) + " seconds...";
+        "Reconnecting in " +
+        Math.ceil(delay / 1000) + " seconds...";
 
-      restartTimer = setTimeout(function() {
+      restartTimer = setTimeout(() => {
         restartTimer = null;
 
         if (!manuallyStopped && !listening) {
@@ -113,16 +320,17 @@
       }, delay);
     }
 
-    function startListening() {
+    window.startListening = function() {
       if (!SpeechRecognition) {
         statusText.textContent =
-          "Speech recognition is not supported. Try Chrome.";
+          "Speech recognition is not supported.";
         return;
       }
 
       if (listening) return;
 
       manuallyStopped = false;
+
       clearTimeout(restartTimer);
       restartTimer = null;
 
@@ -132,28 +340,28 @@
       recognition.continuous = true;
       recognition.interimResults = false;
 
-      recognition.onstart = function() {
+      recognition.onstart = () => {
         listening = true;
         retryCount = 0;
         statusText.textContent = "🎙 Listening...";
       };
 
-      recognition.onresult = function(event) {
+      recognition.onresult = event => {
         const result =
           event.results[event.results.length - 1][0].transcript;
 
-        heardText.textContent = "You said: " + result;
-        speak("I heard " + result);
+        heardText.textContent = "Heard: " + result;
+
+        processMove(result);
       };
 
-      recognition.onerror = function(event) {
+      recognition.onerror = event => {
         listening = false;
-
         statusText.textContent =
           "Microphone message: " + event.error;
       };
 
-      recognition.onend = function() {
+      recognition.onend = () => {
         listening = false;
 
         if (!manuallyStopped) {
@@ -165,28 +373,39 @@
 
       try {
         recognition.start();
-      } catch (error) {
+      } catch {
         listening = false;
         scheduleRestart();
       }
-    }
+    };
 
-    function stopListening() {
+    window.stopListening = function() {
       manuallyStopped = true;
+
       clearTimeout(restartTimer);
       restartTimer = null;
 
-      if (recognition) {
-        recognition.stop();
-      }
+      if (recognition) recognition.stop();
 
       listening = false;
       statusText.textContent = "Listening stopped.";
-    }
+    };
 
-    window.addEventListener("load", function() {
+    window.newGame = function() {
+      game.reset();
+      updateBoard();
+
+      heardText.textContent = "New game started.";
+
+      speak("New chess game started.");
+    };
+
+    updateBoard();
+
+    window.addEventListener("load", () => {
       startListening();
     });
   </script>
+
 </body>
 </html>
