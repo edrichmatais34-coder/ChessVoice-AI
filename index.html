@@ -2,486 +2,703 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
-  <meta charset="UTF-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>ChessVoice AI</title>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>ChessVoice AI</title>
 
-  <style>
-    body {
-      background: #101820;
-      color: white;
-      font-family: Arial, sans-serif;
-      text-align: center;
-      padding: 15px;
-    }
-
-    h1 { color: #00e5a8; }
-
-    .panel {
-      background: #1d2b36;
-      padding: 18px;
-      border-radius: 15px;
-      margin: 15px auto;
-      max-width: 500px;
-    }
-
-    button, select {
-      padding: 13px;
-      margin: 6px;
-      border: none;
-      border-radius: 9px;
-      font-size: 16px;
-    }
-
-    button {
-      background: #00c995;
-      color: #101820;
-      font-weight: bold;
-    }
-
-    #status {
-      color: #00e5a8;
-      font-weight: bold;
-    }
-
-    #moves {
-      text-align: left;
-      line-height: 1.8;
-    }
-
-    #fen {
-      font-size: 12px;
-      overflow-wrap: anywhere;
-      color: #b8c6d1;
-    }
-  </style>
+<style>
+body {
+  background: #101820;
+  color: white;
+  font-family: Arial, sans-serif;
+  text-align: center;
+  padding: 15px;
+}
+h1 { color: #00e5a8; }
+.panel {
+  background: #1d2b36;
+  padding: 18px;
+  border-radius: 15px;
+  margin: 15px auto;
+  max-width: 500px;
+}
+button, select {
+  padding: 13px;
+  margin: 6px;
+  border: none;
+  border-radius: 9px;
+  font-size: 16px;
+}
+button {
+  background: #00c995;
+  color: #101820;
+  font-weight: bold;
+}
+#status, #engineStatus {
+  color: #00e5a8;
+  font-weight: bold;
+}
+#moves {
+  text-align: left;
+  line-height: 1.8;
+}
+#fen {
+  font-size: 12px;
+  overflow-wrap: anywhere;
+  color: #b8c6d1;
+}
+#recommendation {
+  color: #00e5a8;
+  font-size: 18px;
+  font-weight: bold;
+}
+</style>
 </head>
 
 <body>
 
-  <h1>♟ ChessVoice AI</h1>
-  <p>Your voice-powered chess assistant</p>
+<h1>♟ ChessVoice AI</h1>
+<p>Your voice-powered chess assistant</p>
 
-  <div class="panel">
-    <h3>Choose Your Side</h3>
+<div class="panel">
+  <h3>Choose Your Side</h3>
+  <select id="side">
+    <option value="w">White</option>
+    <option value="b">Black</option>
+  </select>
+  <p id="yourSide">Your side: White</p>
+</div>
 
-    <select id="side">
-      <option value="w">White</option>
-      <option value="b">Black</option>
-    </select>
+<div class="panel">
+  <h3>🎙 Voice Control</h3>
+  <p id="status">Starting...</p>
+  <p id="heard">Waiting for a chess move...</p>
 
-    <p id="yourSide">Your side: White</p>
-  </div>
+  <button onclick="startListening()">Start / Restart</button>
+  <button onclick="stopListening()">Stop</button>
 
-  <div class="panel">
-    <h3>🎙 Voice Control</h3>
+  <p>Example: "Knight to F3"</p>
+  <p>Confirm moves by saying "Yes" or "No".</p>
+</div>
 
-    <p id="status">Starting...</p>
-    <p id="heard">Waiting for a chess move...</p>
+<div class="panel">
+  <h3>♟ Move History</h3>
+  <div id="moves">No moves yet.</div>
+</div>
 
-    <button onclick="startListening()">
-      Start / Restart
-    </button>
+<div class="panel">
+  <h3>🤖 Stockfish Analysis</h3>
+  <p id="engineStatus">Stockfish not loaded yet.</p>
 
-    <button onclick="stopListening()">
-      Stop
-    </button>
+  <button onclick="analyzePosition()">
+    Analyze Position
+  </button>
 
-    <p>Example: "Knight to F3"</p>
-    <p>Confirm moves by saying "Yes" or "No".</p>
-  </div>
+  <button onclick="stopAnalysis()">
+    Stop Analysis
+  </button>
 
-  <div class="panel">
-    <h3>♟ Move History</h3>
-    <div id="moves">No moves yet.</div>
-  </div>
+  <p id="recommendation">No recommendation yet.</p>
+</div>
 
-  <div class="panel">
-    <h3>Current Position</h3>
-    <p id="turn">White to move</p>
-    <p id="fen">Starting position</p>
+<div class="panel">
+  <h3>Current Position</h3>
+  <p id="turn">White to move</p>
+  <p id="fen">Starting position</p>
+  <button onclick="newGame()">New Game</button>
+</div>
 
-    <button onclick="newGame()">New Game</button>
-  </div>
+<script type="module">
+import { Chess } from
+  "https://cdn.jsdelivr.net/npm/chess.js@1.4.0/dist/esm/chess.js";
 
-  <script type="module">
-    import { Chess } from
-      "https://cdn.jsdelivr.net/npm/chess.js@1.4.0/dist/esm/chess.js";
+const game = new Chess();
 
-    const game = new Chess();
+const SpeechRecognition =
+  window.SpeechRecognition ||
+  window.webkitSpeechRecognition;
 
-    const SpeechRecognition =
-      window.SpeechRecognition ||
-      window.webkitSpeechRecognition;
+let recognition = null;
+let listening = false;
+let manuallyStopped = false;
+let speaking = false;
+let restartTimer = null;
+let retryCount = 0;
+let pendingMove = null;
 
-    let recognition = null;
-    let listening = false;
-    let manuallyStopped = false;
-    let speaking = false;
-    let restartTimer = null;
-    let retryCount = 0;
-    let pendingMove = null;
+// Stockfish variables
+let engineWorker = null;
+let engineReady = false;
+let engineLoading = false;
+let analysisRunning = false;
+let pendingFen = null;
+let ignoreBestMove = false;
 
-    const statusText = document.getElementById("status");
-    const heardText = document.getElementById("heard");
-    const movesText = document.getElementById("moves");
-    const turnText = document.getElementById("turn");
-    const fenText = document.getElementById("fen");
-    const sideSelect = document.getElementById("side");
+const statusText = document.getElementById("status");
+const heardText = document.getElementById("heard");
+const movesText = document.getElementById("moves");
+const turnText = document.getElementById("turn");
+const fenText = document.getElementById("fen");
+const sideSelect = document.getElementById("side");
+const engineStatus = document.getElementById("engineStatus");
+const recommendation = document.getElementById("recommendation");
 
-    sideSelect.addEventListener("change", () => {
-      document.getElementById("yourSide").textContent =
-        "Your side: " +
-        (sideSelect.value === "w" ? "White" : "Black");
+sideSelect.addEventListener("change", () => {
+  document.getElementById("yourSide").textContent =
+    "Your side: " +
+    (sideSelect.value === "w" ? "White" : "Black");
+});
+
+// ---------------- VOICE ----------------
+
+function speak(message) {
+  if (!window.speechSynthesis) return;
+
+  clearTimeout(restartTimer);
+  restartTimer = null;
+
+  speaking = true;
+
+  if (recognition && listening) {
+    recognition.stop();
+  }
+
+  window.speechSynthesis.cancel();
+
+  const voice = new SpeechSynthesisUtterance(message);
+  voice.lang = "en-US";
+
+  voice.onend = () => {
+    speaking = false;
+    if (!manuallyStopped) startListening();
+  };
+
+  voice.onerror = () => {
+    speaking = false;
+    if (!manuallyStopped) startListening();
+  };
+
+  window.speechSynthesis.speak(voice);
+}
+
+// ---------------- BOARD ----------------
+
+function updateBoard() {
+  const history = game.history();
+
+  movesText.textContent = "";
+
+  if (history.length === 0) {
+    movesText.textContent = "No moves yet.";
+  }
+
+  for (let i = 0; i < history.length; i += 2) {
+    const line = document.createElement("div");
+
+    line.textContent =
+      (Math.floor(i / 2) + 1) + ". " +
+      history[i] + " " + (history[i + 1] || "");
+
+    movesText.appendChild(line);
+  }
+
+  turnText.textContent =
+    game.turn() === "w" ? "White to move" : "Black to move";
+
+  fenText.textContent = game.fen();
+}
+
+function normalize(text) {
+  return text.toLowerCase()
+    .replace(/\bnight\b/g, "knight")
+    .replace(/\bhorse\b/g, "knight")
+    .replace(/\bbish\b/g, "bishop")
+    .replace(/\bto the\b/g, "to")
+    .replace(/\be four\b/g, "e4")
+    .replace(/\be five\b/g, "e5")
+    .replace(/\bf three\b/g, "f3")
+    .replace(/\bfour\b/g, "4")
+    .replace(/\bfive\b/g, "5")
+    .replace(/\bsix\b/g, "6")
+    .replace(/\bseven\b/g, "7")
+    .replace(/\beight\b/g, "8")
+    .replace(/[^a-z0-9 -]/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+function getPiece(text) {
+  if (/\bknight\b/.test(text)) return "n";
+  if (/\bbishop\b/.test(text)) return "b";
+  if (/\brook\b/.test(text)) return "r";
+  if (/\bqueen\b/.test(text)) return "q";
+  if (/\bking\b/.test(text)) return "k";
+  if (/\bpawn\b/.test(text)) return "p";
+  return null;
+}
+
+function pieceName(piece) {
+  return {
+    p: "Pawn",
+    n: "Knight",
+    b: "Bishop",
+    r: "Rook",
+    q: "Queen",
+    k: "King"
+  }[piece];
+}
+
+// ---------------- MOVE RECOGNITION ----------------
+
+function processMove(originalText) {
+  const text = normalize(originalText);
+
+  heardText.textContent = "Heard: " + originalText;
+
+  if (pendingMove) {
+    if (/^(yes|yeah|yep|correct|confirm)$/.test(text)) {
+      confirmMove();
+      return;
+    }
+
+    if (/^(no|nope|wrong|cancel|repeat)$/.test(text)) {
+      pendingMove = null;
+      speak("Okay. Please say the move again.");
+      return;
+    }
+
+    speak("Please say yes to confirm or no to repeat.");
+    return;
+  }
+
+  if (game.isGameOver()) {
+    speak("The game is over. Start a new game.");
+    return;
+  }
+
+  if (text.includes("castle")) {
+    const longCastle =
+      text.includes("queenside") ||
+      text.includes("queen side") ||
+      text.includes("long");
+
+    try {
+      const move = game.move(longCastle ? "O-O-O" : "O-O");
+      finishMove(move);
+    } catch {
+      speak("That castle is not legal.");
+    }
+    return;
+  }
+
+  const piece = getPiece(text);
+
+  if (!piece) {
+    speak("I could not identify the chess piece. Please repeat the move.");
+    return;
+  }
+
+  const square = text.match(/\b([a-h][1-8])\b/);
+
+  if (!square) {
+    speak("I heard the piece, but not the square.");
+    return;
+  }
+
+  const destination = square[1];
+  const fromMatch = text.match(/from ([a-h][1-8])/);
+
+  let candidates = game.moves({ verbose: true }).filter(move =>
+    move.piece === piece &&
+    move.to === destination
+  );
+
+  if (fromMatch) {
+    candidates = candidates.filter(move =>
+      move.from === fromMatch[1]
+    );
+  }
+
+  if (candidates.length === 0) {
+    speak("That is not a legal move. Please try again.");
+    return;
+  }
+
+  if (candidates.length > 1) {
+    speak("More than one piece can move there. Please say the starting square using the words from.");
+    return;
+  }
+
+  const selected = candidates[0];
+
+  pendingMove = {
+    from: selected.from,
+    to: selected.to,
+    promotion: "q",
+    description: pieceName(piece) + " to " + destination.toUpperCase()
+  };
+
+  speak("Did you say " + pendingMove.description + "? Say yes or no.");
+}
+
+function finishMove(move) {
+  updateBoard();
+
+  const side = move.color === "w" ? "White" : "Black";
+  let message = side + " played " + move.san + ".";
+
+  if (game.isCheckmate()) {
+    message += " Checkmate! Game over.";
+  } else if (game.isCheck()) {
+    message += " Check!";
+  } else if (game.isDraw()) {
+    message += " The game is a draw.";
+  }
+
+  heardText.textContent = message;
+  speak(message);
+}
+
+function confirmMove() {
+  if (!pendingMove) return;
+
+  const moveData = pendingMove;
+  pendingMove = null;
+
+  try {
+    const move = game.move({
+      from: moveData.from,
+      to: moveData.to,
+      promotion: moveData.promotion
     });
 
-    // Speak while temporarily pausing microphone recognition.
-    function speak(message) {
-      if (!window.speechSynthesis) return;
+    finishMove(move);
+  } catch {
+    speak("I could not record that move.");
+  }
+}
 
-      clearTimeout(restartTimer);
-      restartTimer = null;
+// ---------------- STOCKFISH ENGINE ----------------
 
-      speaking = true;
+// Full Stockfish 19 single-threaded engine.
+const ENGINE_BASE =
+  "https://cdn.jsdelivr.net/npm/stockfish@19.0.1/bin/";
 
-      if (recognition && listening) {
-        recognition.stop();
-      }
+const ENGINE_JS =
+  ENGINE_BASE + "stockfish-19-single.js";
 
-      window.speechSynthesis.cancel();
+function loadStockfish() {
+  if (engineWorker) return;
 
-      const voice = new SpeechSynthesisUtterance(message);
-      voice.lang = "en-US";
+  engineLoading = true;
+  engineStatus.textContent =
+    "Loading Full Stockfish... This may take a while.";
 
-      voice.onend = () => {
-        speaking = false;
-
-        if (!manuallyStopped) {
-          startListening();
+  try {
+    // A same-origin Blob worker imports the engine from the CDN.
+    // locateFile tells Stockfish where its matching WASM file lives.
+    const bootstrap = `
+      self.Module = {
+        locateFile: function(path) {
+          return "${ENGINE_BASE}" + path;
         }
       };
+      importScripts("${ENGINE_JS}");
+    `;
 
-      voice.onerror = () => {
-        speaking = false;
+    const blob = new Blob(
+      [bootstrap],
+      { type: "text/javascript" }
+    );
 
-        if (!manuallyStopped) {
-          startListening();
+    const workerURL = URL.createObjectURL(blob);
+    engineWorker = new Worker(workerURL);
+
+    engineWorker.onmessage = event => {
+      const line = String(event.data).trim();
+
+      if (line === "uciok") {
+        engineWorker.postMessage("isready");
+        return;
+      }
+
+      if (line === "readyok") {
+        engineReady = true;
+        engineLoading = false;
+
+        engineStatus.textContent =
+          "Full Stockfish is ready.";
+
+        if (pendingFen) {
+          const fen = pendingFen;
+          pendingFen = null;
+          runAnalysis(fen);
         }
-      };
-
-      window.speechSynthesis.speak(voice);
-    }
-
-    function updateBoard() {
-      const history = game.history();
-
-      movesText.textContent = "";
-
-      if (history.length === 0) {
-        movesText.textContent = "No moves yet.";
+        return;
       }
 
-      for (let i = 0; i < history.length; i += 2) {
-        const line = document.createElement("div");
+      if (line.startsWith("bestmove")) {
+        analysisRunning = false;
 
-        line.textContent =
-          (Math.floor(i / 2) + 1) + ". " +
-          history[i] + " " + (history[i + 1] || "");
-
-        movesText.appendChild(line);
-      }
-
-      turnText.textContent =
-        game.turn() === "w" ? "White to move" : "Black to move";
-
-      fenText.textContent = game.fen();
-    }
-
-    function normalize(text) {
-      return text.toLowerCase()
-        .replace(/\bnight\b/g, "knight")
-        .replace(/\bhorse\b/g, "knight")
-        .replace(/\bbish\b/g, "bishop")
-        .replace(/\bto the\b/g, "to")
-        .replace(/\be four\b/g, "e4")
-        .replace(/\be five\b/g, "e5")
-        .replace(/\bf three\b/g, "f3")
-        .replace(/\bfour\b/g, "4")
-        .replace(/\bfive\b/g, "5")
-        .replace(/\bsix\b/g, "6")
-        .replace(/\bseven\b/g, "7")
-        .replace(/\beight\b/g, "8")
-        .replace(/[^a-z0-9 -]/g, " ")
-        .replace(/\s+/g, " ")
-        .trim();
-    }
-
-    function getPiece(text) {
-      if (/\bknight\b/.test(text)) return "n";
-      if (/\bbishop\b/.test(text)) return "b";
-      if (/\brook\b/.test(text)) return "r";
-      if (/\bqueen\b/.test(text)) return "q";
-      if (/\bking\b/.test(text)) return "k";
-      if (/\bpawn\b/.test(text)) return "p";
-
-      return null;
-    }
-
-    function processMove(originalText) {
-      const text = normalize(originalText);
-
-      heardText.textContent = "Heard: " + originalText;
-
-      // Handle yes/no confirmation first.
-      if (pendingMove) {
-        if (/^(yes|yeah|yep|correct|confirm)$/.test(text)) {
-          confirmMove();
+        if (ignoreBestMove) {
+          ignoreBestMove = false;
           return;
         }
 
-        if (/^(no|nope|wrong|cancel|repeat)$/.test(text)) {
-          pendingMove = null;
-          speak("Okay. Please say the move again.");
+        const parts = line.split(/\s+/);
+        const bestMove = parts[1];
+
+        if (!bestMove || bestMove === "(none)" ||
+            bestMove === "0000") {
+          recommendation.textContent =
+            "No legal move available.";
+          engineStatus.textContent =
+            "Analysis finished.";
           return;
         }
 
-        speak("Please say yes to confirm or no to repeat.");
-        return;
-      }
-
-      if (game.isGameOver()) {
-        speak("The game is over. Start a new game.");
-        return;
-      }
-
-      // Castling.
-      if (text.includes("castle")) {
-        const longCastle =
-          text.includes("queenside") ||
-          text.includes("queen side") ||
-          text.includes("long");
-
-        const san = longCastle ? "O-O-O" : "O-O";
-
-        try {
-          const move = game.move(san);
-          finishMove(move);
-        } catch {
-          speak("That castle is not legal.");
-        }
-
-        return;
-      }
-
-      const piece = getPiece(text);
-
-      if (!piece) {
-        speak("I could not identify the chess piece. Please say pawn, knight, bishop, rook, queen, or king.");
-        return;
-      }
-
-      const square = text.match(/\b([a-h][1-8])\b/);
-
-      if (!square) {
-        speak("I heard the piece, but not the square. Please repeat the move.");
-        return;
-      }
-
-      const destination = square[1];
-
-      const fromMatch = text.match(/from ([a-h][1-8])/);
-
-      let candidates = game.moves({ verbose: true }).filter(move =>
-        move.piece === piece &&
-        move.to === destination
-      );
-
-      if (fromMatch) {
-        candidates = candidates.filter(move =>
-          move.from === fromMatch[1]
-        );
-      }
-
-      if (candidates.length === 0) {
-        speak("That is not a legal move. Please try again.");
-        return;
-      }
-
-      if (candidates.length > 1) {
-        speak("More than one piece can move there. Please say the starting square using the words from.");
-        return;
-      }
-
-      const selected = candidates[0];
-
-      pendingMove = {
-        from: selected.from,
-        to: selected.to,
-        promotion: "q",
-        description:
-          pieceName(piece) + " to " + destination.toUpperCase()
-      };
-
-      speak("Did you say " + pendingMove.description + "? Say yes or no.");
-    }
-
-    function pieceName(piece) {
-      return {
-        p: "Pawn",
-        n: "Knight",
-        b: "Bishop",
-        r: "Rook",
-        q: "Queen",
-        k: "King"
-      }[piece];
-    }
-
-    function confirmMove() {
-      if (!pendingMove) return;
-
-      const moveData = pendingMove;
-      pendingMove = null;
-
-      try {
-        const move = game.move({
-          from: moveData.from,
-          to: moveData.to,
-          promotion: moveData.promotion
-        });
-
-        updateBoard();
-
-        const side =
-          move.color === "w" ? "White" : "Black";
-
-        let message = side + " played " + move.san + ".";
-
-        if (game.isCheckmate()) {
-          message += " Checkmate! Game over.";
-        } else if (game.isCheck()) {
-          message += " Check!";
-        } else if (game.isDraw()) {
-          message += " The game is a draw.";
-        }
-
-        heardText.textContent = message;
-        speak(message);
-
-      } catch {
-        speak("I could not record that move.");
-      }
-    }
-
-    function scheduleRestart() {
-      if (manuallyStopped || speaking || restartTimer) return;
-
-      retryCount++;
-
-      const delay = Math.min(retryCount * 1500, 10000);
-
-      statusText.textContent =
-        "Reconnecting in " + Math.ceil(delay / 1000) + " seconds...";
-
-      restartTimer = setTimeout(() => {
-        restartTimer = null;
-
-        if (!manuallyStopped && !listening && !speaking) {
-          startListening();
-        }
-      }, delay);
-    }
-
-    window.startListening = function() {
-      if (!SpeechRecognition) {
-        statusText.textContent =
-          "Speech recognition is not supported.";
-        return;
-      }
-
-      if (listening || speaking || manuallyStopped && !recognition) {
-        if (manuallyStopped) manuallyStopped = false;
-        else return;
-      }
-
-      clearTimeout(restartTimer);
-      restartTimer = null;
-
-      recognition = new SpeechRecognition();
-      recognition.lang = "en-US";
-      recognition.continuous = true;
-      recognition.interimResults = false;
-
-      recognition.onstart = () => {
-        listening = true;
-        retryCount = 0;
-        statusText.textContent = "🎙 Listening...";
-      };
-
-      recognition.onresult = event => {
-        const result =
-          event.results[event.results.length - 1][0].transcript;
-
-        processMove(result);
-      };
-
-      recognition.onerror = event => {
-        listening = false;
-
-        statusText.textContent =
-          "Microphone message: " + event.error;
-
-        if (
-          event.error === "not-allowed" ||
-          event.error === "service-not-allowed"
-        ) {
-          manuallyStopped = true;
-        }
-      };
-
-      recognition.onend = () => {
-        listening = false;
-
-        if (!manuallyStopped && !speaking) {
-          scheduleRestart();
-        } else if (manuallyStopped) {
-          statusText.textContent = "Listening stopped.";
-        }
-      };
-
-      try {
-        recognition.start();
-      } catch {
-        listening = false;
-        scheduleRestart();
+        showBestMove(bestMove);
       }
     };
 
-    window.stopListening = function() {
-      manuallyStopped = true;
-
-      clearTimeout(restartTimer);
-      restartTimer = null;
-
-      if (recognition) recognition.stop();
-
-      listening = false;
-      statusText.textContent = "Listening stopped.";
+    engineWorker.onerror = error => {
+      engineLoading = false;
+      engineReady = false;
+      engineStatus.textContent =
+        "Engine failed to load. Check your internet connection and try again.";
+      console.error(error);
     };
 
-    window.newGame = function() {
-      game.reset();
-      pendingMove = null;
-      updateBoard();
-      heardText.textContent = "New game started.";
-      speak("New chess game started.");
-    };
+    engineWorker.postMessage("uci");
 
-    updateBoard();
+  } catch (error) {
+    engineLoading = false;
+    engineStatus.textContent =
+      "Could not start Stockfish.";
+    console.error(error);
+  }
+}
 
-    window.addEventListener("load", () => {
+function analyzePosition() {
+  if (game.isGameOver()) {
+    recommendation.textContent =
+      "The game is over. Start a new game.";
+    return;
+  }
+
+  if (analysisRunning) {
+    engineStatus.textContent =
+      "Analysis is already running.";
+    return;
+  }
+
+  pendingFen = game.fen();
+
+  recommendation.textContent =
+    "Waiting for Stockfish...";
+
+  if (!engineWorker) {
+    loadStockfish();
+    return;
+  }
+
+  if (!engineReady) {
+    engineStatus.textContent =
+      "Stockfish is still loading. Please wait.";
+    return;
+  }
+
+  const fen = pendingFen;
+  pendingFen = null;
+  runAnalysis(fen);
+}
+
+function runAnalysis(fen) {
+  if (!engineReady || !engineWorker) return;
+
+  analysisRunning = true;
+  engineStatus.textContent =
+    "Stockfish is analyzing the position...";
+
+  recommendation.textContent =
+    "Thinking...";
+
+  engineWorker.postMessage("position fen " + fen);
+  engineWorker.postMessage("go depth 14");
+}
+
+function showBestMove(uci) {
+  try {
+    const from = uci.substring(0, 2);
+    const to = uci.substring(2, 4);
+    const promotion = uci.length > 4 ? uci[4] : undefined;
+
+    const temporaryGame = new Chess(game.fen());
+    const movingPiece = temporaryGame.get(from);
+
+    const moveData = { from, to };
+
+    if (promotion) {
+      moveData.promotion = promotion;
+    }
+
+    const move = temporaryGame.move(moveData);
+
+    if (!move) throw new Error("Invalid engine move");
+
+    const description =
+      pieceName(movingPiece.type) +
+      " to " + to.toUpperCase();
+
+    recommendation.textContent =
+      "Best move: " + move.san +
+      " (" + description + ")";
+
+    engineStatus.textContent =
+      "Analysis complete. Stockfish recommends this move.";
+
+    speak("Stockfish recommends " + description + ".");
+  } catch (error) {
+    recommendation.textContent =
+      "Could not read the recommended move.";
+    console.error(error);
+  }
+}
+
+function stopAnalysis() {
+  if (engineWorker && analysisRunning) {
+    ignoreBestMove = true;
+    engineWorker.postMessage("stop");
+    analysisRunning = false;
+
+    engineStatus.textContent =
+      "Analysis stopped.";
+
+    recommendation.textContent =
+      "Analysis stopped.";
+  }
+}
+
+// ---------------- VOICE RESTART ----------------
+
+function scheduleRestart() {
+  if (manuallyStopped || speaking || restartTimer) return;
+
+  retryCount++;
+
+  const delay = Math.min(retryCount * 1500, 10000);
+
+  statusText.textContent =
+    "Reconnecting in " + Math.ceil(delay / 1000) + " seconds...";
+
+  restartTimer = setTimeout(() => {
+    restartTimer = null;
+
+    if (!manuallyStopped && !listening && !speaking) {
       startListening();
-    });
-  </script>
+    }
+  }, delay);
+}
 
+window.startListening = function() {
+  if (!SpeechRecognition) {
+    statusText.textContent =
+      "Speech recognition is not supported.";
+    return;
+  }
+
+  if (listening || speaking) return;
+
+  manuallyStopped = false;
+
+  clearTimeout(restartTimer);
+  restartTimer = null;
+
+  recognition = new SpeechRecognition();
+  recognition.lang = "en-US";
+  recognition.continuous = true;
+  recognition.interimResults = false;
+
+  recognition.onstart = () => {
+    listening = true;
+    retryCount = 0;
+    statusText.textContent = "🎙 Listening...";
+  };
+
+  recognition.onresult = event => {
+    const result =
+      event.results[event.results.length - 1][0].transcript;
+
+    processMove(result);
+  };
+
+  recognition.onerror = event => {
+    listening = false;
+
+    statusText.textContent =
+      "Microphone message: " + event.error;
+
+    if (
+      event.error === "not-allowed" ||
+      event.error === "service-not-allowed"
+    ) {
+      manuallyStopped = true;
+    }
+  };
+
+  recognition.onend = () => {
+    listening = false;
+
+    if (!manuallyStopped && !speaking) {
+      scheduleRestart();
+    } else if (manuallyStopped) {
+      statusText.textContent = "Listening stopped.";
+    }
+  };
+
+  try {
+    recognition.start();
+  } catch {
+    listening = false;
+    scheduleRestart();
+  }
+};
+
+window.stopListening = function() {
+  manuallyStopped = true;
+
+  clearTimeout(restartTimer);
+  restartTimer = null;
+
+  if (recognition) recognition.stop();
+
+  listening = false;
+  statusText.textContent = "Listening stopped.";
+};
+
+window.analyzePosition = analyzePosition;
+window.stopAnalysis = stopAnalysis;
+
+// ---------------- NEW GAME ----------------
+
+window.newGame = function() {
+  game.reset();
+  pendingMove = null;
+  updateBoard();
+
+  recommendation.textContent =
+    "No recommendation yet.";
+
+  heardText.textContent = "New game started.";
+  speak("New chess game started.");
+};
+
+updateBoard();
+
+window.addEventListener("load", () => {
+  startListening();
+});
+
+</script>
 </body>
 </html>
