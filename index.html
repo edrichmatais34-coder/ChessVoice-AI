@@ -39,11 +39,6 @@
       font-weight: bold;
     }
 
-    select {
-      background: white;
-      color: black;
-    }
-
     #status {
       color: #00e5a8;
       font-weight: bold;
@@ -51,7 +46,6 @@
 
     #moves {
       text-align: left;
-      overflow-wrap: anywhere;
       line-height: 1.8;
     }
 
@@ -86,16 +80,15 @@
     <p id="heard">Waiting for a chess move...</p>
 
     <button onclick="startListening()">
-      Start / Restart Listening
+      Start / Restart
     </button>
 
     <button onclick="stopListening()">
-      Stop Listening
+      Stop
     </button>
 
-    <p style="font-size:13px;color:#b8c6d1">
-      Example: "Knight to F3" or "Pawn to E4"
-    </p>
+    <p>Example: "Knight to F3"</p>
+    <p>Confirm moves by saying "Yes" or "No".</p>
   </div>
 
   <div class="panel">
@@ -115,17 +108,19 @@
     import { Chess } from
       "https://cdn.jsdelivr.net/npm/chess.js@1.4.0/dist/esm/chess.js";
 
-    let game = new Chess();
-
-    let recognition = null;
-    let listening = false;
-    let manuallyStopped = false;
-    let restartTimer = null;
-    let retryCount = 0;
+    const game = new Chess();
 
     const SpeechRecognition =
       window.SpeechRecognition ||
       window.webkitSpeechRecognition;
+
+    let recognition = null;
+    let listening = false;
+    let manuallyStopped = false;
+    let speaking = false;
+    let restartTimer = null;
+    let retryCount = 0;
+    let pendingMove = null;
 
     const statusText = document.getElementById("status");
     const heardText = document.getElementById("heard");
@@ -140,13 +135,39 @@
         (sideSelect.value === "w" ? "White" : "Black");
     });
 
+    // Speak while temporarily pausing microphone recognition.
     function speak(message) {
       if (!window.speechSynthesis) return;
+
+      clearTimeout(restartTimer);
+      restartTimer = null;
+
+      speaking = true;
+
+      if (recognition && listening) {
+        recognition.stop();
+      }
 
       window.speechSynthesis.cancel();
 
       const voice = new SpeechSynthesisUtterance(message);
       voice.lang = "en-US";
+
+      voice.onend = () => {
+        speaking = false;
+
+        if (!manuallyStopped) {
+          startListening();
+        }
+      };
+
+      voice.onerror = () => {
+        speaking = false;
+
+        if (!manuallyStopped) {
+          startListening();
+        }
+      };
 
       window.speechSynthesis.speak(voice);
     }
@@ -154,22 +175,20 @@
     function updateBoard() {
       const history = game.history();
 
+      movesText.textContent = "";
+
       if (history.length === 0) {
         movesText.textContent = "No moves yet.";
-      } else {
-        movesText.innerHTML = "";
+      }
 
-        for (let i = 0; i < history.length; i += 2) {
-          const moveNumber = Math.floor(i / 2) + 1;
-          const whiteMove = history[i];
-          const blackMove = history[i + 1] || "";
+      for (let i = 0; i < history.length; i += 2) {
+        const line = document.createElement("div");
 
-          const line = document.createElement("div");
-          line.textContent =
-            moveNumber + ". " + whiteMove + " " + blackMove;
+        line.textContent =
+          (Math.floor(i / 2) + 1) + ". " +
+          history[i] + " " + (history[i + 1] || "");
 
-          movesText.appendChild(line);
-        }
+        movesText.appendChild(line);
       }
 
       turnText.textContent =
@@ -180,23 +199,62 @@
 
     function normalize(text) {
       return text.toLowerCase()
-        .replace(/night/g, "knight")
-        .replace(/to the/g, "to")
-        .replace(/([a-h])\s+([1-8])/g, "$1$2")
+        .replace(/\bnight\b/g, "knight")
+        .replace(/\bhorse\b/g, "knight")
+        .replace(/\bbish\b/g, "bishop")
+        .replace(/\bto the\b/g, "to")
+        .replace(/\be four\b/g, "e4")
+        .replace(/\be five\b/g, "e5")
+        .replace(/\bf three\b/g, "f3")
+        .replace(/\bfour\b/g, "4")
+        .replace(/\bfive\b/g, "5")
+        .replace(/\bsix\b/g, "6")
+        .replace(/\bseven\b/g, "7")
+        .replace(/\beight\b/g, "8")
         .replace(/[^a-z0-9 -]/g, " ")
         .replace(/\s+/g, " ")
         .trim();
     }
 
+    function getPiece(text) {
+      if (/\bknight\b/.test(text)) return "n";
+      if (/\bbishop\b/.test(text)) return "b";
+      if (/\brook\b/.test(text)) return "r";
+      if (/\bqueen\b/.test(text)) return "q";
+      if (/\bking\b/.test(text)) return "k";
+      if (/\bpawn\b/.test(text)) return "p";
+
+      return null;
+    }
+
     function processMove(originalText) {
       const text = normalize(originalText);
+
+      heardText.textContent = "Heard: " + originalText;
+
+      // Handle yes/no confirmation first.
+      if (pendingMove) {
+        if (/^(yes|yeah|yep|correct|confirm)$/.test(text)) {
+          confirmMove();
+          return;
+        }
+
+        if (/^(no|nope|wrong|cancel|repeat)$/.test(text)) {
+          pendingMove = null;
+          speak("Okay. Please say the move again.");
+          return;
+        }
+
+        speak("Please say yes to confirm or no to repeat.");
+        return;
+      }
 
       if (game.isGameOver()) {
         speak("The game is over. Start a new game.");
         return;
       }
 
-      // Handle castling.
+      // Castling.
       if (text.includes("castle")) {
         const longCastle =
           text.includes("queenside") ||
@@ -211,36 +269,29 @@
         } catch {
           speak("That castle is not legal.");
         }
+
         return;
       }
 
-      // Find the destination square.
+      const piece = getPiece(text);
+
+      if (!piece) {
+        speak("I could not identify the chess piece. Please say pawn, knight, bishop, rook, queen, or king.");
+        return;
+      }
+
       const square = text.match(/\b([a-h][1-8])\b/);
 
       if (!square) {
-        speak("I could not understand the destination square.");
+        speak("I heard the piece, but not the square. Please repeat the move.");
         return;
       }
 
       const destination = square[1];
 
-      // Identify the moving piece.
-      let piece = "p";
+      const fromMatch = text.match(/from ([a-h][1-8])/);
 
-      if (text.includes("knight")) piece = "n";
-      else if (text.includes("bishop")) piece = "b";
-      else if (text.includes("rook")) piece = "r";
-      else if (text.includes("queen")) piece = "q";
-      else if (text.includes("king")) piece = "k";
-
-      // Optional starting square for ambiguous moves.
-      const fromMatch = text.match(
-        /from ([a-h][1-8])/
-      );
-
-      const legalMoves = game.moves({ verbose: true });
-
-      let candidates = legalMoves.filter(move =>
+      let candidates = game.moves({ verbose: true }).filter(move =>
         move.piece === piece &&
         move.to === destination
       );
@@ -257,64 +308,84 @@
       }
 
       if (candidates.length > 1) {
-        speak(
-          "There is more than one possible move. Please say the starting square too."
-        );
+        speak("More than one piece can move there. Please say the starting square using the words from.");
         return;
       }
 
-      try {
-        const selected = candidates[0];
+      const selected = candidates[0];
 
-        const move = game.move({
-          from: selected.from,
-          to: selected.to,
-          promotion: "q"
-        });
+      pendingMove = {
+        from: selected.from,
+        to: selected.to,
+        promotion: "q",
+        description:
+          pieceName(piece) + " to " + destination.toUpperCase()
+      };
 
-        finishMove(move);
-      } catch {
-        speak("I could not complete that move.");
-      }
+      speak("Did you say " + pendingMove.description + "? Say yes or no.");
     }
 
-    function finishMove(move) {
-      updateBoard();
+    function pieceName(piece) {
+      return {
+        p: "Pawn",
+        n: "Knight",
+        b: "Bishop",
+        r: "Rook",
+        q: "Queen",
+        k: "King"
+      }[piece];
+    }
 
-      const side =
-        move.color === "w" ? "White" : "Black";
+    function confirmMove() {
+      if (!pendingMove) return;
 
-      const message =
-        side + " played " + move.san;
+      const moveData = pendingMove;
+      pendingMove = null;
 
-      heardText.textContent = message;
+      try {
+        const move = game.move({
+          from: moveData.from,
+          to: moveData.to,
+          promotion: moveData.promotion
+        });
 
-      speak(message);
+        updateBoard();
 
-      if (game.isCheckmate()) {
-        speak("Checkmate! The game is over.");
-      } else if (game.isCheck()) {
-        speak("Check!");
-      } else if (game.isDraw()) {
-        speak("The game is a draw.");
+        const side =
+          move.color === "w" ? "White" : "Black";
+
+        let message = side + " played " + move.san + ".";
+
+        if (game.isCheckmate()) {
+          message += " Checkmate! Game over.";
+        } else if (game.isCheck()) {
+          message += " Check!";
+        } else if (game.isDraw()) {
+          message += " The game is a draw.";
+        }
+
+        heardText.textContent = message;
+        speak(message);
+
+      } catch {
+        speak("I could not record that move.");
       }
     }
 
     function scheduleRestart() {
-      if (manuallyStopped || restartTimer) return;
+      if (manuallyStopped || speaking || restartTimer) return;
 
       retryCount++;
 
       const delay = Math.min(retryCount * 1500, 10000);
 
       statusText.textContent =
-        "Reconnecting in " +
-        Math.ceil(delay / 1000) + " seconds...";
+        "Reconnecting in " + Math.ceil(delay / 1000) + " seconds...";
 
       restartTimer = setTimeout(() => {
         restartTimer = null;
 
-        if (!manuallyStopped && !listening) {
+        if (!manuallyStopped && !listening && !speaking) {
           startListening();
         }
       }, delay);
@@ -327,15 +398,15 @@
         return;
       }
 
-      if (listening) return;
-
-      manuallyStopped = false;
+      if (listening || speaking || manuallyStopped && !recognition) {
+        if (manuallyStopped) manuallyStopped = false;
+        else return;
+      }
 
       clearTimeout(restartTimer);
       restartTimer = null;
 
       recognition = new SpeechRecognition();
-
       recognition.lang = "en-US";
       recognition.continuous = true;
       recognition.interimResults = false;
@@ -350,23 +421,29 @@
         const result =
           event.results[event.results.length - 1][0].transcript;
 
-        heardText.textContent = "Heard: " + result;
-
         processMove(result);
       };
 
       recognition.onerror = event => {
         listening = false;
+
         statusText.textContent =
           "Microphone message: " + event.error;
+
+        if (
+          event.error === "not-allowed" ||
+          event.error === "service-not-allowed"
+        ) {
+          manuallyStopped = true;
+        }
       };
 
       recognition.onend = () => {
         listening = false;
 
-        if (!manuallyStopped) {
+        if (!manuallyStopped && !speaking) {
           scheduleRestart();
-        } else {
+        } else if (manuallyStopped) {
           statusText.textContent = "Listening stopped.";
         }
       };
@@ -393,10 +470,9 @@
 
     window.newGame = function() {
       game.reset();
+      pendingMove = null;
       updateBoard();
-
       heardText.textContent = "New game started.";
-
       speak("New chess game started.");
     };
 
