@@ -1,124 +1,192 @@
+
 <!DOCTYPE html>
 <html lang="en">
 <head>
-<meta charset="UTF-8">
-<meta name="viewport" content="width=device-width, initial-scale=1">
-<title>ChessVoice AI</title>
-<style>
-body {
-  background:#101827;
-  color:white;
-  font-family:Arial,sans-serif;
-  text-align:center;
-  padding:25px 15px;
-}
-.app {
-  max-width:420px;
-  margin:35px auto;
-  padding:25px;
-  background:#1e293b;
-  border-radius:18px;
-}
-h1 {color:#60a5fa;}
-#status {color:#4ade80;}
-#heard {
-  background:#334155;
-  padding:18px;
-  border-radius:10px;
-  min-height:25px;
-}
-button {
-  background:#2563eb;
-  color:white;
-  border:0;
-  padding:14px 22px;
-  border-radius:10px;
-  font-size:16px;
-}
-</style>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>ChessVoice AI</title>
+
+  <style>
+    body {
+      background: #101820;
+      color: white;
+      font-family: Arial, sans-serif;
+      text-align: center;
+      padding: 20px;
+    }
+
+    h1 { color: #00e5a8; }
+
+    .panel {
+      background: #1d2b36;
+      padding: 22px;
+      border-radius: 15px;
+      margin-top: 25px;
+    }
+
+    #status {
+      color: #00e5a8;
+      font-weight: bold;
+      font-size: 19px;
+    }
+
+    #heard {
+      font-size: 18px;
+      min-height: 50px;
+      overflow-wrap: anywhere;
+    }
+
+    button {
+      background: #00c995;
+      color: #101820;
+      border: none;
+      padding: 14px 20px;
+      margin: 8px;
+      border-radius: 10px;
+      font-size: 16px;
+      font-weight: bold;
+    }
+
+    button:active { opacity: 0.7; }
+  </style>
 </head>
+
 <body>
-<div class="app">
   <h1>♟ ChessVoice AI</h1>
   <p>Your voice-powered chess assistant</p>
-  <h3 id="status">Starting...</h3>
-  <p>Recognized speech:</p>
-  <div id="heard">Waiting for your move...</div>
-  <p id="reply"></p>
-  <button onclick="startListening()">Restart Listening</button>
-</div>
 
-<script>
-const statusText = document.getElementById("status");
-const heard = document.getElementById("heard");
-const reply = document.getElementById("reply");
+  <div class="panel">
+    <p id="status">Ready</p>
+    <p id="heard">Waiting for your voice...</p>
 
-const SpeechRecognition =
-  window.SpeechRecognition ||
-  window.webkitSpeechRecognition;
+    <button onclick="startListening()">
+      🎙 Start / Restart
+    </button>
 
-let recognition;
-let listening = false;
+    <button onclick="stopListening()">
+      Stop
+    </button>
+  </div>
 
-function speak(message) {
-  speechSynthesis.cancel();
-  const voice = new SpeechSynthesisUtterance(message);
-  speechSynthesis.speak(voice);
-}
+  <script>
+    const SpeechRecognition =
+      window.SpeechRecognition ||
+      window.webkitSpeechRecognition;
 
-function startListening() {
-  if (!SpeechRecognition) {
-    statusText.textContent = "Speech recognition unavailable";
-    speak("Your browser does not support speech recognition.");
-    return;
-  }
+    let recognition = null;
+    let listening = false;
+    let manuallyStopped = false;
+    let restartTimer = null;
+    let retryCount = 0;
 
-  if (listening) return;
+    const statusText = document.getElementById("status");
+    const heardText = document.getElementById("heard");
 
-  recognition = new SpeechRecognition();
-  recognition.lang = "en-US";
-  recognition.continuous = true;
-  recognition.interimResults = false;
+    function speak(message) {
+      if (!("speechSynthesis" in window)) return;
 
-  recognition.onstart = () => {
-    listening = true;
-    statusText.textContent = "🎙 Listening...";
-  };
+      window.speechSynthesis.cancel();
 
-  recognition.onresult = (event) => {
-    const text = event.results[
-      event.results.length - 1
-    ][0].transcript;
+      const voice = new SpeechSynthesisUtterance(message);
+      voice.lang = "en-US";
 
-    heard.textContent = text;
-    reply.textContent = "Move received. Chess analysis will be added next.";
-    speak("I heard " + text);
-  };
+      window.speechSynthesis.speak(voice);
+    }
 
-  recognition.onerror = () => {
-    listening = false;
-    statusText.textContent = "Listening stopped. Restart if needed.";
-  };
+    function scheduleRestart() {
+      if (manuallyStopped || restartTimer) return;
 
-  recognition.onend = () => {
-  listening = false;
-  statusText.textContent = "Restarting listening...";
+      retryCount++;
 
-  setTimeout(() => {
-    startListening();
-  }, 1000);
-};
+      // Gradually increase the wait time, up to 10 seconds.
+      const delay = Math.min(1500 * retryCount, 10000);
 
-  try {
-    recognition.start();
-  } catch (error) {
-    statusText.textContent = "Could not start listening.";
-  }
-}
+      statusText.textContent =
+        "Reconnecting in " + Math.ceil(delay / 1000) + " seconds...";
 
-window.onload = () => {
-  startListening();
-};
-</script>
+      restartTimer = setTimeout(function() {
+        restartTimer = null;
+
+        if (!manuallyStopped && !listening) {
+          startListening();
+        }
+      }, delay);
+    }
+
+    function startListening() {
+      if (!SpeechRecognition) {
+        statusText.textContent =
+          "Speech recognition is not supported. Try Chrome.";
+        return;
+      }
+
+      if (listening) return;
+
+      manuallyStopped = false;
+      clearTimeout(restartTimer);
+      restartTimer = null;
+
+      recognition = new SpeechRecognition();
+
+      recognition.lang = "en-US";
+      recognition.continuous = true;
+      recognition.interimResults = false;
+
+      recognition.onstart = function() {
+        listening = true;
+        retryCount = 0;
+        statusText.textContent = "🎙 Listening...";
+      };
+
+      recognition.onresult = function(event) {
+        const result =
+          event.results[event.results.length - 1][0].transcript;
+
+        heardText.textContent = "You said: " + result;
+        speak("I heard " + result);
+      };
+
+      recognition.onerror = function(event) {
+        listening = false;
+
+        statusText.textContent =
+          "Microphone message: " + event.error;
+      };
+
+      recognition.onend = function() {
+        listening = false;
+
+        if (!manuallyStopped) {
+          scheduleRestart();
+        } else {
+          statusText.textContent = "Listening stopped.";
+        }
+      };
+
+      try {
+        recognition.start();
+      } catch (error) {
+        listening = false;
+        scheduleRestart();
+      }
+    }
+
+    function stopListening() {
+      manuallyStopped = true;
+      clearTimeout(restartTimer);
+      restartTimer = null;
+
+      if (recognition) {
+        recognition.stop();
+      }
+
+      listening = false;
+      statusText.textContent = "Listening stopped.";
+    }
+
+    window.addEventListener("load", function() {
+      startListening();
+    });
+  </script>
 </body>
 </html>
