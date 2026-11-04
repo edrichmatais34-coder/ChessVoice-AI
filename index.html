@@ -102,9 +102,13 @@ function startListening() {
   };
 
   recognition.onend = () => {
-    listening = false;
-    statusText.textContent = "Listening ended.";
-  };
+  listening = false;
+  statusText.textContent = "Restarting listening...";
+
+  setTimeout(() => {
+    startListening();
+  }, 1000);
+};
 
   try {
     recognition.start();
